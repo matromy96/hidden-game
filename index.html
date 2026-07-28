@@ -1562,5 +1562,16 @@ if(worldMasksPending <= 0) startGame();
 
 })();
 </script>
+<script>
+// Registro del Service Worker para que el juego funcione offline
+// una vez que se jugó al menos una vez con conexión a internet.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').catch(function(err){
+      console.warn('No se pudo registrar el Service Worker:', err);
+    });
+  });
+}
+</script>
 </body>
 </html>
