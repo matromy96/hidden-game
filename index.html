@@ -175,7 +175,7 @@ const BASE_ROUND_NPCS = 3;
 const MAX_ROUND_NPCS = 28;
 const IMPOSTORS_PER_DIFFICULTY_STEP = 8;
 const MAX_SCORE = 9999;
-const STATE = { MENU:'menu', PLAYING:'playing', GAMEOVER:'gameover', TUTORIAL:'tutorial', CONFIG:'config' };
+const STATE = { MENU:'menu', PLAYING:'playing', GAMEOVER:'gameover', TUTORIAL:'tutorial', CONFIG:'config', COUNTDOWN:'countdown' };
 let gameState = STATE.MENU;
 // a qué pantalla volver al cerrar el config (menú o partida en curso)
 let stateBeforeConfig = STATE.MENU;
@@ -195,6 +195,28 @@ let score = 0;
 let enemiesKilled = 0;
 let chestsOpened = 0; // cofres abiertos en esta partida
 let catchStreak = 0; // racha de aciertos, se corta con un click erróneo
+
+// modo versus local: dos turnos, uno por jugador, sobre el mismo mini-juego de
+// siempre. No agrega ninguna mecánica nueva, solo reutiliza startNewGame() dos
+// veces seguidas y compara los scores al final.
+let versusMode = false;
+let versusStage = 1;     // 1 = turno del jugador 1, 2 = turno del jugador 2
+let versusP1Score = 0;   // score final del jugador 1, guardado al pasar al turno 2
+
+const COUNTDOWN_DURATION_MS = 3000;
+let countdownStartTime = 0;
+
+function startCountdown(){
+  gameState = STATE.COUNTDOWN;
+  countdownStartTime = performance.now();
+}
+
+function startVersusMatch(){
+  versusMode = true;
+  versusStage = 1;
+  versusP1Score = 0;
+  startCountdown();
+}
 
 function rand(min,max){ return Math.random()*(max-min)+min; }
 function choice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
@@ -230,6 +252,10 @@ const ENEMY_TYPES = [
   }
 ];
 const ENEMY_SPAWN_CHANCE = 0.35; // chance de que aparezca al menos un enemigo
+// el enemigo 2 (índice 1) recién puede aparecer una vez atrapados estos impostores
+const ENEMY2_UNLOCK_SCORE = 20;
+// recién a partir de acá puede aparecer más de un enemigo a la vez en pantalla
+const MULTI_ENEMY_UNLOCK_SCORE = 100;
 // a partir del segundo enemigo, la chance de sumar uno más sube con la dificultad
 // (mismo criterio que IMPOSTORS_PER_DIFFICULTY_STEP), hasta un tope de MAX_ENEMIES en pantalla
 const MAX_ENEMIES = 4;
@@ -265,6 +291,11 @@ function drawSplashes(){
   }
 }
 
+// tipos de enemigo disponibles según cuántos impostores lleva atrapados el jugador
+function unlockedEnemyTypes(){
+  return score >= ENEMY2_UNLOCK_SCORE ? ENEMY_TYPES : ENEMY_TYPES.slice(0, 1);
+}
+
 function makeEnemy(){
   const w = ENEMY_W, h = ENEMY_H;
   const speed = rand(30, 50);
@@ -272,7 +303,7 @@ function makeEnemy(){
   let e, tries = 0;
   do{
     e = {
-      type: choice(ENEMY_TYPES),
+      type: choice(unlockedEnemyTypes()),
       w, h,
       x: rand(w/2, W-w/2),
       y: rand(FIELD_TOP+h/2, FIELD_BOTTOM-h/2),
@@ -298,6 +329,7 @@ function spawnEnemies(){
   enemies = [];
   if(Math.random() >= ENEMY_SPAWN_CHANCE) return;
   enemies.push(makeEnemy());
+  if(score < MULTI_ENEMY_UNLOCK_SCORE) return; // todavía no puede aparecer más de uno
   while(enemies.length < MAX_ENEMIES && Math.random() < extraEnemyChance()){
     enemies.push(makeEnemy());
   }
@@ -539,8 +571,17 @@ function drawForegroundBackground(){
 function makeSprite(cname, vname, isTarget){
   const info = CHAR_DATA[cname];
   const w = info.w, h = info.h;
-  const speed = rand(30, 50);
+  // variedad de "estilos de caminar": cada npc sale un poco más lento o más
+  // rápido que el resto, y su ciclo de animación acompaña esa velocidad
+  // (el que camina rápido también mueve las piernas más rápido), para que
+  // no se sienta que todos caminan igual de monótono
+  const speed = rand(24, 60);
+  const speedT = (speed - 24) / (60 - 24); // 0 = lento, 1 = rápido
+  const frameInterval = rand(160, 200) - speedT * 90;
   const angle = rand(0, Math.PI*2);
+  // salto "de sorpresa": no ocurre solo caminando, se dispara puntualmente
+  // (por ejemplo al hacer click incorrecto sobre el npc). jumpOffset es
+  // visual, nunca toca x/y reales, así que no afecta colisiones ni hit-test
   return {
     char: cname, variant: vname, isTarget: isTarget,
     w: w, h: h,
@@ -550,8 +591,13 @@ function makeSprite(cname, vname, isTarget){
     vy: Math.sin(angle)*speed,
     frame: 0,
     frameTimer: 0,
-    frameInterval: rand(120,190),
-    turnTimer: rand(600,1800)
+    frameInterval: frameInterval,
+    turnTimer: rand(600,1800),
+    jumping: false,
+    jumpElapsed: 0,
+    jumpDuration: rand(320,480),
+    jumpHeight: rand(28,50),
+    jumpOffset: 0
   };
 }
 
@@ -570,8 +616,9 @@ function spawnRound(){
   splashes = [];
   powerupFly = null;
   freezeTimeLeft = 0;
-  if(slowmoTimeLeft > 0) setMainMusicRate(1); // por si quedó slow-mo activo de la ronda anterior
+  if(slowmoTimeLeft > 0 || jumpPartyTimeLeft > 0) setMainMusicRate(1); // por si quedó slow-mo o jump party activo de la ronda anterior
   slowmoTimeLeft = 0;
+  jumpPartyTimeLeft = 0;
 
   const tChar = choice(CHAR_NAMES);
   const tVariants = variantsOf(tChar);
@@ -636,10 +683,11 @@ const POWERUP_W = 35, POWERUP_H = 41;
 const POWERUP_FREEZE_IMG = loadImg('assets/powerup/powerups-2.png');
 const POWERUP_FREEZE_W = 29, POWERUP_FREEZE_H = 27;
 const CHEST_SPAWN_CHANCE = 0.3; // chance de que aparezca el cofre
-const CHEST_TIME_BONUS_MS = 3000; // +3s de tiempo
-// entre los drops normales: chance de freeze, de slow-mo, y el resto va a tiempo (ver openchest)
+const CHEST_TIME_BONUS_OPTIONS_MS = [1000, 2000, 3000, 4000]; // variaciones posibles: +1, +2, +3, +4
+// entre los drops normales: chance de freeze, de slow-mo, de jump party, y el resto va a tiempo (ver openchest)
 const CHEST_FREEZE_CHANCE = 0.34;
 const CHEST_SLOWMO_CHANCE = 0.33;
+const CHEST_JUMPPARTY_CHANCE = 0.15;
 let chest = null;
 let powerupFly = null; // el power-up que ya salió volando
 
@@ -669,6 +717,15 @@ const SLOWMO_DURATION_MS = 4000;
 const SLOWMO_SPEED_SCALE = 0.15; // 15% de la velocidad normal
 const SLOWMO_MUSIC_RATE = 0.6;  // velocidad de la música mientras dura
 let slowmoTimeLeft = 0; // ms que quedan en cámara lenta
+
+// power-up "jump party": todos los npcs se ponen a saltar en cadena (reutiliza
+// triggerJump, que ya ignora el llamado si el sprite sigue en el aire, así que
+// cada npc encadena salto tras salto solo mientras dura el power-up)
+const POWERUP_JUMPPARTY_IMG = loadImg('assets/powerup/powerups-3.png');
+const POWERUP_JUMPPARTY_W = 35, POWERUP_JUMPPARTY_H = 41;
+const JUMPPARTY_DURATION_MS = 6000;
+const JUMPPARTY_MUSIC_RATE = 1.35; // pitch up de la música mientras dura (lo opuesto al slow-mo)
+let jumpPartyTimeLeft = 0; // ms que quedan de fiesta de saltos
 
 function makeChest(){
   const w = CHEST_W, h = CHEST_H;
@@ -712,7 +769,7 @@ function openChest(c){
     timeLeft = Math.max(0, timeLeft - CHEST_FAKE_TIME_PENALTY_MS);
     spawnTimeGainPopup(c.x, c.y, performance.now(), formatTimeGainText(-CHEST_FAKE_TIME_PENALTY_MS), true);
   } else {
-    // un solo roll: primero freeze, después slow-mo, el resto tiempo
+    // un solo roll: freeze, slow-mo, jump party, el resto tiempo
     const roll = Math.random();
     if(roll < CHEST_FREEZE_CHANCE){
       img = POWERUP_FREEZE_IMG; w = POWERUP_FREEZE_W; h = POWERUP_FREEZE_H;
@@ -722,10 +779,15 @@ function openChest(c){
       img = POWERUP_SLOWMO_IMG; w = POWERUP_SLOWMO_W; h = POWERUP_SLOWMO_H;
       slowmoTimeLeft = SLOWMO_DURATION_MS;
       setMainMusicRate(SLOWMO_MUSIC_RATE);
+    } else if(roll < CHEST_FREEZE_CHANCE + CHEST_SLOWMO_CHANCE + CHEST_JUMPPARTY_CHANCE){
+      img = POWERUP_JUMPPARTY_IMG; w = POWERUP_JUMPPARTY_W; h = POWERUP_JUMPPARTY_H;
+      jumpPartyTimeLeft = JUMPPARTY_DURATION_MS;
+      setMainMusicRate(JUMPPARTY_MUSIC_RATE);
     } else {
       img = POWERUP_TIME_IMG; w = POWERUP_W; h = POWERUP_H;
-      timeLeft += CHEST_TIME_BONUS_MS;
-      spawnTimeGainPopup(c.x, c.y, performance.now(), formatTimeGainText(CHEST_TIME_BONUS_MS));
+      const bonus = choice(CHEST_TIME_BONUS_OPTIONS_MS);
+      timeLeft += bonus;
+      spawnTimeGainPopup(c.x, c.y, performance.now(), formatTimeGainText(bonus));
     }
   }
 
@@ -777,6 +839,56 @@ const HUD = {
   x: 16,
   y: 26
 };
+
+const SCORE_HUD = {
+  font: '20px Impact, "Arial Narrow", sans-serif',
+  fill: '#ffffff',
+  stroke: '#000000',
+  lineWidth: 4,
+  x: 16,
+  y: H - 26
+};
+
+// contador de 3 segundos antes de arrancar (lo usa el modo versus al pasar de turno)
+const COUNTDOWN_FONT = {
+  font: '80px Impact, "Arial Narrow", sans-serif',
+  fill: '#ffffff',
+  stroke: '#000000',
+  lineWidth: 8
+};
+
+function drawCountdown(now){
+  const remaining = COUNTDOWN_DURATION_MS - (now - countdownStartTime);
+  const secondsLeft = Math.max(1, Math.ceil(remaining/1000));
+  ctx.save();
+  ctx.font = COUNTDOWN_FONT.font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = COUNTDOWN_FONT.lineWidth;
+  ctx.strokeStyle = COUNTDOWN_FONT.stroke;
+  ctx.strokeText(String(secondsLeft), W/2, H/2);
+  ctx.fillStyle = COUNTDOWN_FONT.fill;
+  ctx.fillText(String(secondsLeft), W/2, H/2);
+  if(versusMode){
+    // aviso simple de qué turno viene, mismo estilo que el resto del hud
+    const label = `TURNO JUGADOR ${versusStage}`;
+    ctx.font = SCORE_HUD.font;
+    ctx.lineWidth = SCORE_HUD.lineWidth;
+    ctx.strokeText(label, W/2, H/2 - 90);
+    ctx.fillText(label, W/2, H/2 - 90);
+  }
+  ctx.restore();
+}
+
+// efecto de "shake + zoom" en el SCORE al llegar a un puntaje redondo (5, y luego cada 10)
+const SCORE_MILESTONE_DURATION_MS = 450;
+const SCORE_MILESTONE_MAX_SCALE = 1.5;
+const SCORE_MILESTONE_SHAKE_PX = 6;
+let scoreMilestoneStartTime = -Infinity;
+function isScoreMilestone(v){
+  return v === 5 || (v > 0 && v % 10 === 0);
+}
 
 // draw
 const FIND_ICON_GAP = 14; // separación entre "find:" y el ícono
@@ -839,6 +951,38 @@ function drawTimer(){
   ctx.restore();
 }
 
+function drawScoreHUD(){
+  const label = versusMode ? `P.${versusStage} SCORE` : 'SCORE';
+  const text = `${label}: ${score}`;
+  ctx.save();
+  ctx.font = SCORE_HUD.font;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = SCORE_HUD.lineWidth;
+  ctx.strokeStyle = SCORE_HUD.stroke;
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = SCORE_HUD.fill;
+
+  const elapsed = performance.now() - scoreMilestoneStartTime;
+  if(elapsed < SCORE_MILESTONE_DURATION_MS){
+    // puntaje redondo recién alcanzado: zoom rápido (curva de seno, sube y vuelve)
+    // + sacudida que se va apagando a medida que pasa el efecto
+    const t = elapsed / SCORE_MILESTONE_DURATION_MS;
+    const scale = 1 + Math.sin(t*Math.PI) * (SCORE_MILESTONE_MAX_SCALE - 1);
+    const shakeT = 1 - t;
+    const shakeX = (Math.random()-0.5) * SCORE_MILESTONE_SHAKE_PX * shakeT;
+    const shakeY = (Math.random()-0.5) * SCORE_MILESTONE_SHAKE_PX * shakeT;
+    ctx.translate(SCORE_HUD.x + shakeX, SCORE_HUD.y + shakeY);
+    ctx.scale(scale, scale);
+    ctx.strokeText(text, 0, 0);
+    ctx.fillText(text, 0, 0);
+  } else {
+    ctx.strokeText(text, SCORE_HUD.x, SCORE_HUD.y);
+    ctx.fillText(text, SCORE_HUD.x, SCORE_HUD.y);
+  }
+  ctx.restore();
+}
+
 // estos personajes miran a la izquierda por defecto, el resto mira a la derecha (lista hecha a mano)
 const WALK_SPRITE_CHARS = new Set(['cross', 'emiliana', 'martoline', 'matromy', 'seth', 'gatito', 'milo', 'triangulo']);
 
@@ -847,7 +991,8 @@ function drawSprite(s){
   const img = frames[s.frame];
   if(!img.complete || img.naturalWidth===0) return;
   ctx.save();
-  ctx.translate(s.x, s.y);
+  // jumpOffset es solo visual: sube el dibujo sin mover la posición real (s.y)
+  ctx.translate(s.x, s.y - (s.jumpOffset||0));
   // si mira a la izquierda por defecto, el flip es al revés
   const facesLeftByDefault = WALK_SPRITE_CHARS.has(s.char);
   const shouldFlip = facesLeftByDefault ? (s.vx > 0) : (s.vx < 0);
@@ -922,9 +1067,11 @@ function drawTouchEffects(now){
 }
 
 // pantalla de game over
+const GAMEOVER_BG_BLUR_PX = 3; // intensidad del blur sobre fondo/personajes al morir
 const GO_BASEL = loadImg('assets/hud/game-over/game-over-basel.png');
 const GO_BUTTON_RETRY = loadImg('assets/hud/game-over/game-over-button1.png');
 const GO_BUTTON_QUIT = loadImg('assets/hud/game-over/game-over-button2.png');
+const GO_TIMEUP_LOGO = loadImg('assets/hud/game-over/game-over-timeuplogo.png');
 
 // misma idea de máscara de alpha que las colisiones, para que el click coincida con el dibujo
 const retryButtonMask = buildAlphaMask(GO_BUTTON_RETRY, 'game-over-button1.png');
@@ -938,19 +1085,23 @@ function isQuitButtonHit(x, y){
 }
 
 // posiciones de las 3 estadísticas sobre el fondo de game over, medidas sobre el png
+// (coordenadas tomadas directo de Aseprite: centro de cada medalla)
 const GAMEOVER_STATS_FONT = {
   font: '30px Impact, "Arial Narrow", sans-serif',
   fill: '#ffffff',
   stroke: '#000000',
   lineWidth: 5
 };
-const GAMEOVER_SCORE_POS = {x: 186, y: 536};    // al lado de "score:"
-const GAMEOVER_ENEMIES_POS = {x: 172, y: 610};  // al lado del ícono de enemigo
-const GAMEOVER_CHESTS_POS = {x: 340, y: 617};   // al lado del ícono de cofre
+// medalla verde: enemigos muertos. círculo real en PNG: x[56,156] bottom=738 -> texto debajo, centrado en x=106
+const GAMEOVER_ENEMIES_POS = {x: 106, y: 758};
+// medalla amarilla: impostores atrapados (score). círculo real en PNG: x[168,268] bottom=729 -> texto debajo, centrado en x=218
+const GAMEOVER_SCORE_POS = {x: 218, y: 749};
+// medalla café: cofres abiertos. círculo real en PNG: x[280,380] bottom=738 -> texto debajo, centrado en x=330
+const GAMEOVER_CHESTS_POS = {x: 330, y: 758};
 
 function drawGameOverStat(value, pos){
   ctx.font = GAMEOVER_STATS_FONT.font;
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineJoin = 'round';
   ctx.lineWidth = GAMEOVER_STATS_FONT.lineWidth;
@@ -1035,8 +1186,10 @@ function drawTimeGainPopups(now){
   }
 }
 
-function drawGameOver(){
+function drawGameOver(now){
   drawImgNative(GO_BASEL);
+  const bob = Math.sin((now / LOGO_BOB_PERIOD) * Math.PI * 2) * LOGO_BOB_AMPLITUDE;
+  drawImgNative(GO_TIMEUP_LOGO, 0, bob);
   drawImgNative(GO_BUTTON_RETRY);
   drawImgNative(GO_BUTTON_QUIT);
 
@@ -1044,6 +1197,28 @@ function drawGameOver(){
   drawGameOverStat(score, GAMEOVER_SCORE_POS);
   drawGameOverStat(enemiesKilled, GAMEOVER_ENEMIES_POS);
   drawGameOverStat(chestsOpened, GAMEOVER_CHESTS_POS);
+  ctx.restore();
+
+  if(versusMode) drawVersusGameOverLabel();
+}
+
+// aviso arriba del cartel de game over con el resultado final (esta pantalla
+// solo se llega a ver tras el turno de P.2, ya que P.1 pasa directo al
+// contador sin pasar por acá)
+function drawVersusGameOverLabel(){
+  const text = versusP1Score === score
+    ? `EMPATE — P.1: ${versusP1Score}  P.2: ${score}`
+    : `GANA P.${versusP1Score > score ? 1 : 2} — P.1: ${versusP1Score}  P.2: ${score}`;
+  ctx.save();
+  ctx.font = SCORE_HUD.font;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = SCORE_HUD.lineWidth;
+  ctx.strokeStyle = SCORE_HUD.stroke;
+  ctx.strokeText(text, W/2, 40);
+  ctx.fillStyle = SCORE_HUD.fill;
+  ctx.fillText(text, W/2, 40);
   ctx.restore();
 }
 
@@ -1198,13 +1373,16 @@ applyMasterVolume(); // aplica el volumen inicial
 const MENU_BASE = loadImg('assets/hud/menu/menu-base.png');
 const MENU_BUTTON_START = loadImg('assets/hud/menu/menu-button1.png');
 const MENU_BUTTON_OPTIONS = loadImg('assets/hud/menu/menu-button2.png');
-const MENU_BUTTON_TUTORIAL = loadImg('assets/hud/menu/menu-button3.png');
+const MENU_BUTTON_VS = loadImg('assets/hud/menu/menu-button5.png');
+const MENU_BUTTON_MEDAL = loadImg('assets/hud/menu/menu-button6.png');
 const MENU_LOGO = loadImg('assets/hud/menu/menu-idea-logo.png');
 
 // mismo truco de máscara de alpha que el botón de retry
 const menuStartMask = buildAlphaMask(MENU_BUTTON_START, 'menu-button1.png');
 const menuOptionsMask = buildAlphaMask(MENU_BUTTON_OPTIONS, 'menu-button2.png');
-const menuTutorialMask = buildAlphaMask(MENU_BUTTON_TUTORIAL, 'menu-button3.png');
+// botones nuevos: por ahora solo visuales, sin acción asociada todavía
+const menuVsMask = buildAlphaMask(MENU_BUTTON_VS, 'menu-button5.png');
+const menuMedalMask = buildAlphaMask(MENU_BUTTON_MEDAL, 'menu-button6.png');
 
 // animación de flotar del logo: se mueve todo el canvas transparente arriba/abajo
 const LOGO_BOB_AMPLITUDE = 8;
@@ -1216,7 +1394,8 @@ function drawMenu(now){
   drawImgNative(MENU_LOGO, 0, bob);
   drawImgNative(MENU_BUTTON_START);
   drawImgNative(MENU_BUTTON_OPTIONS);
-  drawImgNative(MENU_BUTTON_TUTORIAL);
+  drawImgNative(MENU_BUTTON_VS);
+  drawImgNative(MENU_BUTTON_MEDAL);
 }
 
 // pantalla de tutorial
@@ -1267,9 +1446,16 @@ function update(dt){
   updatePowerupFly(dt);
 
   // cuenta regresiva del slow-mo, al llegar a 0 la música vuelve a la normalidad
+  // (si el jump party sigue activo, el pitch se lo deja a él en vez de resetear)
   if(slowmoTimeLeft > 0){
     slowmoTimeLeft = Math.max(0, slowmoTimeLeft - dt);
-    if(slowmoTimeLeft <= 0) setMainMusicRate(1);
+    if(slowmoTimeLeft <= 0 && jumpPartyTimeLeft <= 0) setMainMusicRate(1);
+  }
+
+  // cuenta regresiva del jump party (los npcs siguen encadenando saltos en stepSprites mientras dure)
+  if(jumpPartyTimeLeft > 0){
+    jumpPartyTimeLeft = Math.max(0, jumpPartyTimeLeft - dt);
+    if(jumpPartyTimeLeft <= 0 && slowmoTimeLeft <= 0) setMainMusicRate(1);
   }
 
   if(freezeTimeLeft > 0){
@@ -1287,7 +1473,15 @@ function update(dt){
   }
 
   if(timeLeft <= 0){
-    gameState = STATE.GAMEOVER;
+    if(versusMode && versusStage === 1){
+      // termina el turno de P.1 sin pasar por la pantalla de game over:
+      // guarda su score y arranca directo el contador para P.2
+      versusP1Score = score;
+      versusStage = 2;
+      startCountdown();
+    } else {
+      gameState = STATE.GAMEOVER;
+    }
     return;
   }
 
@@ -1344,7 +1538,36 @@ function stepSprites(s, dt){
       s.frameTimer = 0;
       s.frame = (s.frame+1)%3;
     }
+
+    // jump party: mientras dure, cada npc encadena salto tras salto
+    // (triggerJump ya ignora el llamado si sigue en el aire, así que esto
+    // simplemente lo re-dispara apenas termina el salto anterior). Se limita
+    // a entidades que tienen props de salto (los npcs, no los enemigos)
+    if(jumpPartyTimeLeft > 0 && s.jumpHeight !== undefined) triggerJump(s);
+
+    // salto: solo afecta s.jumpOffset (offset visual al dibujar), nunca s.x/s.y,
+    // así que no interfiere con colisiones, rebotes ni hit-test.
+    // se dispara puntualmente con triggerJump(s), no por timer propio.
+    if(s.jumping){
+      s.jumpElapsed += dt;
+      if(s.jumpElapsed >= s.jumpDuration){
+        s.jumping = false;
+        s.jumpOffset = 0;
+      } else {
+        const t = s.jumpElapsed / s.jumpDuration;
+        s.jumpOffset = Math.sin(t*Math.PI) * s.jumpHeight;
+      }
+    }
   }
+}
+
+// dispara el salto de un sprite al instante (ej: al hacer click incorrecto sobre él)
+// si ya está saltando, se ignora el nuevo disparo para que termine bien el salto actual
+// en vez de cortarlo y reiniciarlo (lo que se veía raro si spameaban clicks)
+function triggerJump(s){
+  if(s.jumping) return;
+  s.jumping = true;
+  s.jumpElapsed = 0;
 }
 
 function loop(now){
@@ -1352,6 +1575,21 @@ function loop(now){
   lastFrameTime = now;
 
   ctx.clearRect(0,0,W,H);
+
+  // contador de 3s: pantalla aislada, no toca nada del resto del loop.
+  // al terminar, arranca la partida con el mismo startNewGame() de siempre.
+  if(gameState === STATE.COUNTDOWN){
+    updateClouds(dt);
+    drawBackground();
+    drawForegroundBackground();
+    drawCountdown(now);
+    drawIntroFade(now);
+    drawTouchEffects(now);
+    if(now - countdownStartTime >= COUNTDOWN_DURATION_MS) startNewGame();
+    requestAnimationFrame(loop);
+    return;
+  }
+
   if(gameState === STATE.PLAYING) update(dt);
 
   // si el config se abrió durante una partida, hay que seguir mostrando los npcs reales de fondo
@@ -1376,26 +1614,31 @@ function loop(now){
       drawMenu(now);
     }
   } else {
+    ctx.save();
+    if(gameState === STATE.GAMEOVER) ctx.filter = `blur(${GAMEOVER_BG_BLUR_PX}px)`;
     drawBackground();
     drawWorldEntitiesDepthSorted();
     drawPowerupFly();
     drawForegroundBackground();
+    drawSplashes();
+    ctx.restore();
     if(gameState === STATE.GAMEOVER){
       drawFreezeOverlay();
-      drawGameOver();
+      drawGameOver(now);
     } else if(gameState === STATE.CONFIG){
       drawTarget();
       drawTimer();
+      drawScoreHUD();
       drawTimeGainPopups(now);
       drawFreezeOverlay();
       drawConfig();
     } else {
       drawTarget();
       drawTimer();
+      drawScoreHUD();
       drawTimeGainPopups(now);
       drawFreezeOverlay();
     }
-    drawSplashes();
   }
 
   drawIntroFade(now);
@@ -1419,14 +1662,18 @@ function handleClick(evt){
   const p = getPos(evt);
   spawnTouchEffect(p.x, p.y, performance.now());
 
+  if(gameState === STATE.COUNTDOWN) return; // el contador no reacciona a clicks
+
   if(gameState === STATE.MENU){
     if(alphaAt(menuStartMask, p.x, p.y) === 1){
+      versusMode = false;
       startNewGame();
-    } else if(alphaAt(menuTutorialMask, p.x, p.y) === 1){
-      tutorialPage = 0;
-      gameState = STATE.TUTORIAL;
     } else if(alphaAt(menuOptionsMask, p.x, p.y) === 1){
       openConfig();
+    } else if(alphaAt(menuVsMask, p.x, p.y) === 1){
+      startVersusMatch();
+    } else if(alphaAt(menuMedalMask, p.x, p.y) === 1){
+      // TODO: sin acción todavía
     }
     return;
   }
@@ -1453,8 +1700,16 @@ function handleClick(evt){
 
   if(gameState === STATE.GAMEOVER){
     if(isRetryButtonHit(p.x, p.y)){
-      startNewGame();
+      if(versusMode){
+        // solo se llega acá tras perder el turno de P.2 (P.1 pasa directo al
+        // contador sin pasar por esta pantalla): reinicia el versus desde P.1
+        startVersusMatch();
+      } else {
+        startNewGame();
+      }
     } else if(isQuitButtonHit(p.x, p.y)){
+      versusMode = false;
+      versusStage = 1;
       spawnMenuDecoration();
       gameState = STATE.MENU;
       playMenuMusic();
@@ -1491,6 +1746,7 @@ function handleClick(evt){
       if(s.isTarget){
         clickLock = true;
         score = Math.min(score + 1, MAX_SCORE);
+        if(isScoreMilestone(score)) scoreMilestoneStartTime = performance.now();
         trackImpostorCaught();
         catchStreak++;
         timeLeft += TIME_GAIN_MS;
@@ -1502,6 +1758,7 @@ function handleClick(evt){
         catchStreak = 0;
         timeLeft = Math.max(0, timeLeft - WRONG_CLICK_PENALTY_MS);
         playWrong();
+        triggerJump(s);
       }
       return;
     }
@@ -1524,6 +1781,7 @@ function startNewGame(){
   pickRandomBackground();
   playMainMusic();
   score = 0;
+  scoreMilestoneStartTime = -Infinity;
   enemiesKilled = 0;
   chestsOpened = 0;
   catchStreak = 0;
@@ -1561,17 +1819,6 @@ function startGame(){
 if(worldMasksPending <= 0) startGame();
 
 })();
-</script>
-<script>
-// Registro del Service Worker para que el juego funcione offline
-// una vez que se jugó al menos una vez con conexión a internet.
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function(){
-    navigator.serviceWorker.register('sw.js').catch(function(err){
-      console.warn('No se pudo registrar el Service Worker:', err);
-    });
-  });
-}
 </script>
 </body>
 </html>
