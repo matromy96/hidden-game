@@ -165,9 +165,17 @@ function updateClouds(dt){
 }
 
 // estado del juego
-const START_TIME_MS = 30000;
-const WRONG_CLICK_PENALTY_MS = 5000;
-const TIME_GAIN_MS = 2000;
+// tiempo inicial: en modo difícil arrancamos con mucho menos margen
+const START_TIME_MS_NORMAL = 30000;
+const START_TIME_MS_HARD = 10000;
+function startTimeMs(){ return isHardMode ? START_TIME_MS_HARD : START_TIME_MS_NORMAL; }
+const START_TIME_MS = START_TIME_MS_NORMAL; // valor de referencia para el estado inicial, antes de arrancar partida
+const WRONG_CLICK_PENALTY_MS_NORMAL = 5000;
+const WRONG_CLICK_PENALTY_MS_HARD = 10000;
+function wrongClickPenaltyMs(){ return isHardMode ? WRONG_CLICK_PENALTY_MS_HARD : WRONG_CLICK_PENALTY_MS_NORMAL; }
+const TIME_GAIN_MS_NORMAL = 2000;
+const TIME_GAIN_MS_HARD = 1000;
+function timeGainMs(){ return isHardMode ? TIME_GAIN_MS_HARD : TIME_GAIN_MS_NORMAL; }
 
 // dificultad
 // más npcs a medida que subís de score, hasta un tope para que no se llene la pantalla
@@ -252,10 +260,18 @@ const ENEMY_TYPES = [
   }
 ];
 const ENEMY_SPAWN_CHANCE = 0.35; // chance de que aparezca al menos un enemigo
+// el enemigo 1 (índice 0, el más básico) recién puede empezar a aparecer acá
+const ENEMY1_UNLOCK_SCORE_NORMAL = 12;
+const ENEMY1_UNLOCK_SCORE_HARD = 0;
+function enemy1UnlockScore(){ return isHardMode ? ENEMY1_UNLOCK_SCORE_HARD : ENEMY1_UNLOCK_SCORE_NORMAL; }
 // el enemigo 2 (índice 1) recién puede aparecer una vez atrapados estos impostores
-const ENEMY2_UNLOCK_SCORE = 20;
+const ENEMY2_UNLOCK_SCORE_NORMAL = 40;
+const ENEMY2_UNLOCK_SCORE_HARD = 0;
+function enemy2UnlockScore(){ return isHardMode ? ENEMY2_UNLOCK_SCORE_HARD : ENEMY2_UNLOCK_SCORE_NORMAL; }
 // recién a partir de acá puede aparecer más de un enemigo a la vez en pantalla
-const MULTI_ENEMY_UNLOCK_SCORE = 100;
+const MULTI_ENEMY_UNLOCK_SCORE_NORMAL = 100;
+const MULTI_ENEMY_UNLOCK_SCORE_HARD = 17;
+function multiEnemyUnlockScore(){ return isHardMode ? MULTI_ENEMY_UNLOCK_SCORE_HARD : MULTI_ENEMY_UNLOCK_SCORE_NORMAL; }
 // a partir del segundo enemigo, la chance de sumar uno más sube con la dificultad
 // (mismo criterio que IMPOSTORS_PER_DIFFICULTY_STEP), hasta un tope de MAX_ENEMIES en pantalla
 const MAX_ENEMIES = 4;
@@ -293,7 +309,7 @@ function drawSplashes(){
 
 // tipos de enemigo disponibles según cuántos impostores lleva atrapados el jugador
 function unlockedEnemyTypes(){
-  return score >= ENEMY2_UNLOCK_SCORE ? ENEMY_TYPES : ENEMY_TYPES.slice(0, 1);
+  return score >= enemy2UnlockScore() ? ENEMY_TYPES : ENEMY_TYPES.slice(0, 1);
 }
 
 function makeEnemy(){
@@ -327,9 +343,10 @@ function makeEnemy(){
 // después va sumando más de a uno con chance creciente según la dificultad, hasta MAX_ENEMIES
 function spawnEnemies(){
   enemies = [];
+  if(score < enemy1UnlockScore()) return; // todavía no desbloqueó ni el enemigo más básico
   if(Math.random() >= ENEMY_SPAWN_CHANCE) return;
   enemies.push(makeEnemy());
-  if(score < MULTI_ENEMY_UNLOCK_SCORE) return; // todavía no puede aparecer más de uno
+  if(score < multiEnemyUnlockScore()) return; // todavía no puede aparecer más de uno
   while(enemies.length < MAX_ENEMIES && Math.random() < extraEnemyChance()){
     enemies.push(makeEnemy());
   }
@@ -696,7 +713,9 @@ const CHEST_FAKE_CLOSED_IMG = loadImg('assets/powerup/cofre3.png');
 const CHEST_FAKE_OPEN_IMG = loadImg('assets/powerup/cofre4.png');
 const POWERUP_BAD_ITEM_IMG = loadImg('assets/powerup/bad-item.png');
 const POWERUP_BAD_ITEM_W = 35, POWERUP_BAD_ITEM_H = 41;
-const CHEST_FAKE_CHANCE = 0.3; // chance de que el cofre sea falso
+const CHEST_FAKE_CHANCE_NORMAL = 0.3; // chance de que el cofre sea falso
+const CHEST_FAKE_CHANCE_HARD = 0.75;  // en difícil, la mayoría de los cofres son trampa
+function chestFakeChance(){ return isHardMode ? CHEST_FAKE_CHANCE_HARD : CHEST_FAKE_CHANCE_NORMAL; }
 const CHEST_FAKE_TIME_PENALTY_MS = 3000; // -3s si es falso
 
 // cofre dorado: mismo cofre pero con mucho más bonus de tiempo, muy raro que salga
@@ -731,7 +750,7 @@ function makeChest(){
   const w = CHEST_W, h = CHEST_H;
   // el dorado se decide primero, si sale dorado ya no puede ser falso
   const isGold = Math.random() < CHEST_GOLD_CHANCE;
-  const isFake = !isGold && Math.random() < CHEST_FAKE_CHANCE;
+  const isFake = !isGold && Math.random() < chestFakeChance();
   let c, tries = 0;
   do{
     c = {
@@ -834,6 +853,7 @@ function drawPowerupFly(){
 const HUD = {
   font: '30px Impact, "Arial Narrow", sans-serif',
   fill: '#ffffff',
+  fillHard: '#ff3b3b', // color del timer cuando está activo el modo difícil
   stroke: '#000000',
   lineWidth: 6,
   x: 16,
@@ -872,7 +892,7 @@ function drawCountdown(now){
   ctx.fillText(String(secondsLeft), W/2, H/2);
   if(versusMode){
     // aviso simple de qué turno viene, mismo estilo que el resto del hud
-    const label = `TURNO JUGADOR ${versusStage}`;
+    const label = `PLAYER ${versusStage} GET READY IN...`;
     ctx.font = SCORE_HUD.font;
     ctx.lineWidth = SCORE_HUD.lineWidth;
     ctx.strokeText(label, W/2, H/2 - 90);
@@ -946,7 +966,7 @@ function drawTimer(){
   ctx.strokeStyle = HUD.stroke;
   ctx.lineJoin = 'round';
   ctx.strokeText(text, HUD.x, HUD.y);
-  ctx.fillStyle = HUD.fill;
+  ctx.fillStyle = isHardMode ? HUD.fillHard : HUD.fill;
   ctx.fillText(text, HUD.x, HUD.y);
   ctx.restore();
 }
@@ -1073,6 +1093,12 @@ const GO_BUTTON_RETRY = loadImg('assets/hud/game-over/game-over-button1.png');
 const GO_BUTTON_QUIT = loadImg('assets/hud/game-over/game-over-button2.png');
 const GO_TIMEUP_LOGO = loadImg('assets/hud/game-over/game-over-timeuplogo.png');
 
+// variantes exclusivas del game over en modo versus: medallero de 2 (solo
+// impostores atrapados de P.1 y P.2) y logo variable según quién ganó
+const GO_VS_MEDALS = loadImg('assets/hud/game-over/vs/vs-game-over-medals.png');
+const GO_VS_LOGO_P1 = loadImg('assets/hud/game-over/vs/vs-game-over-p1.png');
+const GO_VS_LOGO_P2 = loadImg('assets/hud/game-over/vs/vs-game-over-p2.png');
+
 // misma idea de máscara de alpha que las colisiones, para que el click coincida con el dibujo
 const retryButtonMask = buildAlphaMask(GO_BUTTON_RETRY, 'game-over-button1.png');
 function isRetryButtonHit(x, y){
@@ -1098,6 +1124,12 @@ const GAMEOVER_ENEMIES_POS = {x: 106, y: 758};
 const GAMEOVER_SCORE_POS = {x: 218, y: 749};
 // medalla café: cofres abiertos. círculo real en PNG: x[280,380] bottom=738 -> texto debajo, centrado en x=330
 const GAMEOVER_CHESTS_POS = {x: 330, y: 758};
+
+// posiciones de las 2 medallas de vs-game-over-medals.png (solo impostores
+// atrapados de P.1 y P.2). medalla P1: x[95,195] bottom=739 -> texto debajo,
+// centrado en x=145. medalla P2: x[221,321] bottom=742 -> centrado en x=271
+const GAMEOVER_VS_P1_POS = {x: 145, y: 759};
+const GAMEOVER_VS_P2_POS = {x: 271, y: 762};
 
 function drawGameOverStat(value, pos){
   ctx.font = GAMEOVER_STATS_FONT.font;
@@ -1133,7 +1165,7 @@ function formatTimeGainText(ms){
 }
 
 function spawnTimeGainPopup(x, y, now, text, isPenalty){
-  timeGainPopups.push({x, y, startTime: now, text: text || formatTimeGainText(TIME_GAIN_MS), isPenalty: !!isPenalty});
+  timeGainPopups.push({x, y, startTime: now, text: text || formatTimeGainText(timeGainMs()), isPenalty: !!isPenalty});
 }
 
 function easeOutCubic(t){ return 1 - Math.pow(1-t, 3); }
@@ -1187,8 +1219,22 @@ function drawTimeGainPopups(now){
 }
 
 function drawGameOver(now){
-  drawImgNative(GO_BASEL);
   const bob = Math.sin((now / LOGO_BOB_PERIOD) * Math.PI * 2) * LOGO_BOB_AMPLITUDE;
+
+  if(versusMode){
+    drawImgNative(versusWinnerLogo(), 0, bob);
+    drawImgNative(GO_BUTTON_RETRY);
+    drawImgNative(GO_BUTTON_QUIT);
+    drawImgNative(GO_VS_MEDALS);
+
+    ctx.save();
+    drawGameOverStat(versusP1Score, GAMEOVER_VS_P1_POS);
+    drawGameOverStat(score, GAMEOVER_VS_P2_POS);
+    ctx.restore();
+    return;
+  }
+
+  drawImgNative(GO_BASEL);
   drawImgNative(GO_TIMEUP_LOGO, 0, bob);
   drawImgNative(GO_BUTTON_RETRY);
   drawImgNative(GO_BUTTON_QUIT);
@@ -1198,66 +1244,73 @@ function drawGameOver(now){
   drawGameOverStat(enemiesKilled, GAMEOVER_ENEMIES_POS);
   drawGameOverStat(chestsOpened, GAMEOVER_CHESTS_POS);
   ctx.restore();
-
-  if(versusMode) drawVersusGameOverLabel();
 }
 
-// aviso arriba del cartel de game over con el resultado final (esta pantalla
-// solo se llega a ver tras el turno de P.2, ya que P.1 pasa directo al
-// contador sin pasar por acá)
-function drawVersusGameOverLabel(){
-  const text = versusP1Score === score
-    ? `EMPATE — P.1: ${versusP1Score}  P.2: ${score}`
-    : `GANA P.${versusP1Score > score ? 1 : 2} — P.1: ${versusP1Score}  P.2: ${score}`;
-  ctx.save();
-  ctx.font = SCORE_HUD.font;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = SCORE_HUD.lineWidth;
-  ctx.strokeStyle = SCORE_HUD.stroke;
-  ctx.strokeText(text, W/2, 40);
-  ctx.fillStyle = SCORE_HUD.fill;
-  ctx.fillText(text, W/2, 40);
-  ctx.restore();
+// elige qué logo flotante mostrar en el game over de versus según quién ganó.
+// en caso de empate no hay arte dedicado, así que se usa el logo genérico
+// (mismo que el modo normal) para no forzar un ganador que no existe
+function versusWinnerLogo(){
+  if(versusP1Score === score) return GO_TIMEUP_LOGO;
+  return versusP1Score > score ? GO_VS_LOGO_P1 : GO_VS_LOGO_P2;
 }
 
 // pantalla de config
 const CONFIG_BASE = loadImg('assets/hud/config/config-base.png');
-const CONFIG_VOLUME_BAR = [1,2,3,4,5,6].map(n => loadImg(`assets/hud/config/volume-options${n}.png`)); // el índice es el nivel de volumen
-const CONFIG_ARROW_LEFT = loadImg('assets/hud/config/config-arrow-left.png');
-const CONFIG_ARROW_RIGHT = loadImg('assets/hud/config/config-arrow-right.png');
-const CONFIG_EXIT = loadImg('assets/hud/config/icon-exit.png');
+const CONFIG_LOGO = loadImg('assets/hud/config/config-logo.png');
+const CONFIG_EXIT = loadImg('assets/hud/config/icon-exit1.png');
 
-const configExitMask = buildAlphaMask(CONFIG_EXIT, 'icon-exit.png');
-const configArrowLeftMask = buildAlphaMask(CONFIG_ARROW_LEFT, 'config-arrow-left.png');
-const configArrowRightMask = buildAlphaMask(CONFIG_ARROW_RIGHT, 'config-arrow-right.png');
+// botones de dos frames (toggle): frame 1 es el estado por defecto, frame 2
+// el estado activo. Tocar el botón alterna entre ambos frames.
+const CONFIG_HARD1 = loadImg('assets/hud/config/config-hard1.png');
+const CONFIG_HARD2 = loadImg('assets/hud/config/config-hard2.png');
+const CONFIG_MUTE1 = loadImg('assets/hud/config/config-mute1.png');
+const CONFIG_MUTE2 = loadImg('assets/hud/config/config-mute2.png');
 
-// nivel de volumen general (0 a 5), afecta música y sonidos
-const MASTER_VOLUME_MAX_LEVEL = CONFIG_VOLUME_BAR.length - 1;
-let masterVolumeLevel = 3;
+const configExitMask = buildAlphaMask(CONFIG_EXIT, 'icon-exit1.png');
+// cada frame tiene su propia máscara, ya que el dibujo (y por ende el alpha)
+// cambia de un frame a otro
+const configHardMask1 = buildAlphaMask(CONFIG_HARD1, 'config-hard1.png');
+const configHardMask2 = buildAlphaMask(CONFIG_HARD2, 'config-hard2.png');
+const configMuteMask1 = buildAlphaMask(CONFIG_MUTE1, 'config-mute1.png');
+const configMuteMask2 = buildAlphaMask(CONFIG_MUTE2, 'config-mute2.png');
+
 // se llena más abajo, cuando ya existen todos los audios
 const ALL_AUDIO_ELEMENTS = [];
-function applyMasterVolume(){
-  const v = masterVolumeLevel / MASTER_VOLUME_MAX_LEVEL;
+
+// silencio general: al tocar el botón de mute, todo el audio se apaga/enciende
+let isMuted = false;
+function applyMute(){
+  const v = isMuted ? 0 : 1;
   for(const a of ALL_AUDIO_ELEMENTS) a.volume = v;
 }
-function decreaseMasterVolume(){
-  masterVolumeLevel = Math.max(0, masterVolumeLevel-1);
-  applyMasterVolume();
-  playUiSound1();
+function toggleMute(){
+  isMuted = !isMuted;
+  applyMute();
+  if(!isMuted) playUiSound1(); // si quedó muteado no tendría sentido sonar
 }
-function increaseMasterVolume(){
-  masterVolumeLevel = Math.min(MASTER_VOLUME_MAX_LEVEL, masterVolumeLevel+1);
-  applyMasterVolume();
+
+// modo difícil: por ahora solo el botón cambia de frame, todavía sin efecto
+// real sobre la dificultad del juego (TODO)
+let isHardMode = false;
+function toggleHardMode(){
+  isHardMode = !isHardMode;
   playUiSound1();
 }
 
-function drawConfig(){
+// la dificultad solo se puede cambiar fuera de una partida en curso (si el
+// config se abrió desde el menú/tutorial, no desde el juego con ESC)
+function canChangeDifficulty(){
+  return stateBeforeConfig !== STATE.PLAYING;
+}
+
+function drawConfig(now){
   drawImgNative(CONFIG_BASE);
-  drawImgNative(CONFIG_VOLUME_BAR[masterVolumeLevel]);
-  drawImgNative(CONFIG_ARROW_LEFT);
-  drawImgNative(CONFIG_ARROW_RIGHT);
+  const bob = Math.sin((now / LOGO_BOB_PERIOD) * Math.PI * 2) * LOGO_BOB_AMPLITUDE;
+  drawImgNative(CONFIG_LOGO, 0, bob);
+  if(!canChangeDifficulty()) ctx.globalAlpha = 0.4; // atenuado: avisa que está bloqueado en partida
+  drawImgNative(isHardMode ? CONFIG_HARD2 : CONFIG_HARD1);
+  ctx.globalAlpha = 1;
+  drawImgNative(isMuted ? CONFIG_MUTE2 : CONFIG_MUTE1);
   drawImgNative(CONFIG_EXIT);
 }
 
@@ -1367,7 +1420,7 @@ ALL_AUDIO_ELEMENTS.push(
   ...FOUND_SOUNDS,
   WRONG_SOUND, ENEMY_DEATH_SOUND, ENEMY_SHOOT_SOUND, UI_SOUND1, UI_SOUND2, CHEST_OPEN_SOUND, FREEZE_SOUND
 );
-applyMasterVolume(); // aplica el volumen inicial
+applyMute(); // aplica el estado de silencio inicial
 
 // pantalla de menú
 const MENU_BASE = loadImg('assets/hud/menu/menu-base.png');
@@ -1609,7 +1662,7 @@ function loop(now){
     if(gameState === STATE.TUTORIAL){
       drawTutorial();
     } else if(gameState === STATE.CONFIG){
-      drawConfig();
+      drawConfig(now);
     } else {
       drawMenu(now);
     }
@@ -1631,7 +1684,7 @@ function loop(now){
       drawScoreHUD();
       drawTimeGainPopups(now);
       drawFreezeOverlay();
-      drawConfig();
+      drawConfig(now);
     } else {
       drawTarget();
       drawTimer();
@@ -1679,12 +1732,14 @@ function handleClick(evt){
   }
 
   if(gameState === STATE.CONFIG){
+    const hardMask = isHardMode ? configHardMask2 : configHardMask1;
+    const muteMask = isMuted ? configMuteMask2 : configMuteMask1;
     if(alphaAt(configExitMask, p.x, p.y) === 1){
       gameState = stateBeforeConfig;
-    } else if(alphaAt(configArrowLeftMask, p.x, p.y) === 1){
-      decreaseMasterVolume();
-    } else if(alphaAt(configArrowRightMask, p.x, p.y) === 1){
-      increaseMasterVolume();
+    } else if(alphaAt(hardMask, p.x, p.y) === 1 && canChangeDifficulty()){
+      toggleHardMode();
+    } else if(alphaAt(muteMask, p.x, p.y) === 1){
+      toggleMute();
     }
     return;
   }
@@ -1749,14 +1804,14 @@ function handleClick(evt){
         if(isScoreMilestone(score)) scoreMilestoneStartTime = performance.now();
         trackImpostorCaught();
         catchStreak++;
-        timeLeft += TIME_GAIN_MS;
-        spawnTimeGainPopup(s.x, s.y, performance.now());
+        timeLeft += timeGainMs();
+        spawnTimeGainPopup(s.x, s.y, performance.now(), formatTimeGainText(timeGainMs()));
         playFound();
         pickRandomBackground();
         spawnRound();
       } else {
         catchStreak = 0;
-        timeLeft = Math.max(0, timeLeft - WRONG_CLICK_PENALTY_MS);
+        timeLeft = Math.max(0, timeLeft - wrongClickPenaltyMs());
         playWrong();
         triggerJump(s);
       }
@@ -1785,8 +1840,8 @@ function startNewGame(){
   enemiesKilled = 0;
   chestsOpened = 0;
   catchStreak = 0;
-  timeLeft = START_TIME_MS;
-  lastSecond = Math.ceil(START_TIME_MS/1000);
+  timeLeft = startTimeMs();
+  lastSecond = Math.ceil(startTimeMs()/1000);
   timeGainPopups = [];
   splashes = [];
   spawnRound();
