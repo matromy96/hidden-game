@@ -1,182 +1,312 @@
-// Service Worker de HIDDEN (v2.2 - Fix versión pegada)
-const CACHE_NAME = 'hidden-game-cache-v3'; // <- IMPORTANTE: subir este número cada vez que
-                                            //    cambies este mismo sw.js, para forzar limpieza
-                                            //    de caché vieja en el activate()
+// sw.js — Service Worker para HIDDEN! (arcade offline)
+// Cachea TODO el juego (imágenes, audio, index.html, manifest) la primera vez
+// que se abre con conexión, y a partir de ahí sirve todo desde el dispositivo,
+// sin depender de internet nunca más.
+//
+// Como el juego es un build cerrado (no se va a estar actualizando el
+// contenido de GitHub), no hace falta lógica de "chequear versión nueva":
+// cachea una vez y listo.
 
-const CORE_ASSETS = [
+const CACHE_NAME = 'hidden-cache-v1';
+
+const PRECACHE_URLS = [
   './',
-  './index.html',
-  './manifest.json',
-  './MainTheme.mp3',
-  './MainTheme2.mp3',
-  './MenuTheme.mp3'
+  'index.html',
+  'MainTheme.mp3',
+  'MainTheme2.mp3',
+  'MenuTheme.mp3',
+  'assets/bg-world/arbol-tronco1.png',
+  'assets/bg-world/arbol-tronco2.png',
+  'assets/bg-world/arbol-tronco3.png',
+  'assets/bg-world/bg-arboles1.png',
+  'assets/bg-world/bg-arboles2.png',
+  'assets/bg-world/bg-arboles3.png',
+  'assets/bg-world/bg-arbustos1.png',
+  'assets/bg-world/bg-arbustos2.png',
+  'assets/bg-world/bg-lago1.png',
+  'assets/bg-world/bg-lago2.png',
+  'assets/bg-world/bg-lago3.png',
+  'assets/bg-world/bg-lago4.png',
+  'assets/bg-world/bg-pasto1.png',
+  'assets/bg-world/bg-pasto2.png',
+  'assets/bg-world/bg-pasto3.png',
+  'assets/bg-world/bg-pasto4.png',
+  'assets/bg-world/bg-pasto5.png',
+  'assets/bg-world/bg-pasto6.png',
+  'assets/bg-world/bg-pasto7.png',
+  'assets/bg-world/bg-pasto8.png',
+  'assets/bg-world/bg-pasto9.png',
+  'assets/bg/bg-find.png',
+  'assets/bg/bg-fondo.png',
+  'assets/bg/bg-fondo2.png',
+  'assets/bg/bg-fondo3.png',
+  'assets/bg/bg-fondo4.png',
+  'assets/bg/bg-fondo5.png',
+  'assets/bg/bg-fondo6.png',
+  'assets/bg/bg-montana.png',
+  'assets/bg/bg-montana2.png',
+  'assets/bg/bg-montana3.png',
+  'assets/bg/bg-montana4.png',
+  'assets/bg/bg-montana5.png',
+  'assets/bg/bg-montana6.png',
+  'assets/bg/bg-nubes.png',
+  'assets/bg/bg-nubes3.png',
+  'assets/bg/bg-nubes4.png',
+  'assets/bg/bg-sol.png',
+  'assets/bg/bg-sol1.png',
+  'assets/bg/bg-sol2.png',
+  'assets/bg/bg-sol3.png',
+  'assets/bg/bg-sol4.png',
+  'assets/bg/bg-sol5.png',
+  'assets/bg/bg-sol6.png',
+  'assets/bg/bg-sol7.png',
+  'assets/bg/bg-sol8.png',
+  'assets/hud/config/config-base.png',
+  'assets/hud/config/config-hard1.png',
+  'assets/hud/config/config-hard2.png',
+  'assets/hud/config/config-hard3.png',
+  'assets/hud/config/config-hard4.png',
+  'assets/hud/config/config-hard5.png',
+  'assets/hud/config/config-logo.png',
+  'assets/hud/config/config-mute1.png',
+  'assets/hud/config/config-mute2.png',
+  'assets/hud/config/icon-exit1.png',
+  'assets/hud/game-over/game-over-basel.png',
+  'assets/hud/game-over/game-over-button1.png',
+  'assets/hud/game-over/game-over-button2.png',
+  'assets/hud/game-over/game-over-timeuplogo.png',
+  'assets/hud/game-over/vs/vs-game-over-medals.png',
+  'assets/hud/game-over/vs/vs-game-over-p1.png',
+  'assets/hud/game-over/vs/vs-game-over-p2.png',
+  'assets/hud/menu/menu-base.png',
+  'assets/hud/menu/menu-button1.png',
+  'assets/hud/menu/menu-button2.png',
+  'assets/hud/menu/menu-button5.png',
+  'assets/hud/menu/menu-button6.png',
+  'assets/hud/menu/menu-idea-logo.png',
+  'assets/hud/sfx/ui_sound1.mp3',
+  'assets/hud/sfx/uiz_sound2.mp3',
+  'assets/hud/tutorial/tutorial-exit.png',
+  'assets/hud/tutorial/tutorial-shit1.png',
+  'assets/hud/tutorial/tutorial-shit2.png',
+  'assets/hud/tutorial/tutorial-shit3.png',
+  'assets/hud/tutorial/tutorial-shit4.png',
+  'assets/pjs/Fuegito1-0.png',
+  'assets/pjs/Fuegito1-1.png',
+  'assets/pjs/Fuegito1-2.png',
+  'assets/pjs/Fuegito2-0.png',
+  'assets/pjs/Fuegito2-1.png',
+  'assets/pjs/Fuegito2-2.png',
+  'assets/pjs/Fuegito3-0.png',
+  'assets/pjs/Fuegito3-1.png',
+  'assets/pjs/Fuegito3-2.png',
+  'assets/pjs/Gatito-al-rescate1-0.png',
+  'assets/pjs/Gatito-al-rescate1-1.png',
+  'assets/pjs/Gatito-al-rescate1-2.png',
+  'assets/pjs/Gatito-al-rescate2-0.png',
+  'assets/pjs/Gatito-al-rescate2-1.png',
+  'assets/pjs/Gatito-al-rescate2-2.png',
+  'assets/pjs/Gatito-al-rescate3-0.png',
+  'assets/pjs/Gatito-al-rescate3-1.png',
+  'assets/pjs/Gatito-al-rescate3-2.png',
+  'assets/pjs/Triangulo1-0.png',
+  'assets/pjs/Triangulo1-1.png',
+  'assets/pjs/Triangulo1-2.png',
+  'assets/pjs/Triangulo2-0.png',
+  'assets/pjs/Triangulo2-1.png',
+  'assets/pjs/Triangulo2-2.png',
+  'assets/pjs/Triangulo3-0.png',
+  'assets/pjs/Triangulo3-1.png',
+  'assets/pjs/Triangulo3-2.png',
+  'assets/pjs/blaster1-0.png',
+  'assets/pjs/blaster1-1.png',
+  'assets/pjs/blaster1-2.png',
+  'assets/pjs/blaster2-0.png',
+  'assets/pjs/blaster2-1.png',
+  'assets/pjs/blaster2-2.png',
+  'assets/pjs/blaster3-0.png',
+  'assets/pjs/blaster3-1.png',
+  'assets/pjs/blaster3-2.png',
+  'assets/pjs/cross-animated-0.png',
+  'assets/pjs/cross-animated-1.png',
+  'assets/pjs/cross-animated-2.png',
+  'assets/pjs/cross-animated2-0.png',
+  'assets/pjs/cross-animated2-1.png',
+  'assets/pjs/cross-animated2-2.png',
+  'assets/pjs/cross-animated3-0.png',
+  'assets/pjs/cross-animated3-1.png',
+  'assets/pjs/cross-animated3-2.png',
+  'assets/pjs/cross-animated4-0.png',
+  'assets/pjs/cross-animated4-1.png',
+  'assets/pjs/cross-animated4-2.png',
+  'assets/pjs/emiliana-animated-0.png',
+  'assets/pjs/emiliana-animated-1.png',
+  'assets/pjs/emiliana-animated-2.png',
+  'assets/pjs/emiliana-animated2-0.png',
+  'assets/pjs/emiliana-animated2-1.png',
+  'assets/pjs/emiliana-animated2-2.png',
+  'assets/pjs/emiliana-animated3-0.png',
+  'assets/pjs/emiliana-animated3-1.png',
+  'assets/pjs/emiliana-animated3-2.png',
+  'assets/pjs/enemy/enemie1-animated-0.png',
+  'assets/pjs/enemy/enemie1-animated-1.png',
+  'assets/pjs/enemy/enemie1-animated-2.png',
+  'assets/pjs/enemy/enemie1-death.png',
+  'assets/pjs/enemy/enemie2-animated-0.png',
+  'assets/pjs/enemy/enemie2-animated-1.png',
+  'assets/pjs/enemy/enemie2-animated-2.png',
+  'assets/pjs/enemy/enemie2-death.png',
+  'assets/pjs/enemy/enemy-death.mp3',
+  'assets/pjs/enemy/enemy-shoot.mp3',
+  'assets/pjs/enemy/splash2.png',
+  'assets/pjs/enemy/splash3.png',
+  'assets/pjs/icons/Fuegito1.png',
+  'assets/pjs/icons/Fuegito2.png',
+  'assets/pjs/icons/Fuegito3.png',
+  'assets/pjs/icons/Gatito-al-rescate1.png',
+  'assets/pjs/icons/Gatito-al-rescate2.png',
+  'assets/pjs/icons/Gatito-al-rescate3.png',
+  'assets/pjs/icons/Triangulo1.png',
+  'assets/pjs/icons/Triangulo2.png',
+  'assets/pjs/icons/Triangulo3.png',
+  'assets/pjs/icons/blaster1.png',
+  'assets/pjs/icons/blaster2.png',
+  'assets/pjs/icons/blaster3.png',
+  'assets/pjs/icons/blind.png',
+  'assets/pjs/icons/cross-animated.png',
+  'assets/pjs/icons/cross-animated2.png',
+  'assets/pjs/icons/cross-animated3.png',
+  'assets/pjs/icons/cross-animated4.png',
+  'assets/pjs/icons/emiliana-animated.png',
+  'assets/pjs/icons/emiliana-animated2.png',
+  'assets/pjs/icons/emiliana-animated3.png',
+  'assets/pjs/icons/martoline-animated.png',
+  'assets/pjs/icons/martoline-animated2.png',
+  'assets/pjs/icons/martoline-animated3.png',
+  'assets/pjs/icons/matromy-animated.png',
+  'assets/pjs/icons/matromy-animated2.png',
+  'assets/pjs/icons/matromy-animated3.png',
+  'assets/pjs/icons/matromy-animated4.png',
+  'assets/pjs/icons/milo-walk.png',
+  'assets/pjs/icons/milo-walk1.png',
+  'assets/pjs/icons/milo-walk2.png',
+  'assets/pjs/icons/pepo1.png',
+  'assets/pjs/icons/pepo2.png',
+  'assets/pjs/icons/pepo3.png',
+  'assets/pjs/icons/seth-icon1.png',
+  'assets/pjs/icons/seth-icon2.png',
+  'assets/pjs/icons/seth-icon3.png',
+  'assets/pjs/martoline-animated-0.png',
+  'assets/pjs/martoline-animated-1.png',
+  'assets/pjs/martoline-animated-2.png',
+  'assets/pjs/martoline-animated2-0.png',
+  'assets/pjs/martoline-animated2-1.png',
+  'assets/pjs/martoline-animated2-2.png',
+  'assets/pjs/martoline-animated3-0.png',
+  'assets/pjs/martoline-animated3-1.png',
+  'assets/pjs/martoline-animated3-2.png',
+  'assets/pjs/matromy-animated-0.png',
+  'assets/pjs/matromy-animated-1.png',
+  'assets/pjs/matromy-animated-2.png',
+  'assets/pjs/matromy-animated2-0.png',
+  'assets/pjs/matromy-animated2-1.png',
+  'assets/pjs/matromy-animated2-2.png',
+  'assets/pjs/matromy-animated3-0.png',
+  'assets/pjs/matromy-animated3-1.png',
+  'assets/pjs/matromy-animated3-2.png',
+  'assets/pjs/matromy-animated4-0.png',
+  'assets/pjs/matromy-animated4-1.png',
+  'assets/pjs/matromy-animated4-2.png',
+  'assets/pjs/milo-walk-0.png',
+  'assets/pjs/milo-walk-1.png',
+  'assets/pjs/milo-walk-2.png',
+  'assets/pjs/milo-walk1-0.png',
+  'assets/pjs/milo-walk1-1.png',
+  'assets/pjs/milo-walk1-2.png',
+  'assets/pjs/milo-walk2-0.png',
+  'assets/pjs/milo-walk2-1.png',
+  'assets/pjs/milo-walk2-2.png',
+  'assets/pjs/pepo1-0.png',
+  'assets/pjs/pepo1-1.png',
+  'assets/pjs/pepo1-2.png',
+  'assets/pjs/pepo2-0.png',
+  'assets/pjs/pepo2-1.png',
+  'assets/pjs/pepo2-2.png',
+  'assets/pjs/pepo3-0.png',
+  'assets/pjs/pepo3-1.png',
+  'assets/pjs/pepo3-2.png',
+  'assets/pjs/seth-0.png',
+  'assets/pjs/seth-1.png',
+  'assets/pjs/seth-2.png',
+  'assets/pjs/seth2-0.png',
+  'assets/pjs/seth2-1.png',
+  'assets/pjs/seth2-2.png',
+  'assets/pjs/seth3-0.png',
+  'assets/pjs/seth3-1.png',
+  'assets/pjs/seth3-2.png',
+  'assets/powerup/bad-item.png',
+  'assets/powerup/cofre1.png',
+  'assets/powerup/cofre2.png',
+  'assets/powerup/cofre3.png',
+  'assets/powerup/cofre4.png',
+  'assets/powerup/cofre5.png',
+  'assets/powerup/cofre6.png',
+  'assets/powerup/freeze.mp3',
+  'assets/powerup/iced.png',
+  'assets/powerup/openchest.mp3',
+  'assets/powerup/powerups-0.png',
+  'assets/powerup/powerups-1.png',
+  'assets/powerup/powerups-2.png',
+  'assets/powerup/powerups-3.png',
+  'assets/sfx/clock-sfx1.mp3',
+  'assets/sfx/clock-sfx2.mp3',
+  'assets/sfx/imposter-founded.mp3',
+  'assets/sfx/imposter-founded2.mp3',
+  'assets/sfx/imposter-founded3.mp3',
+  'assets/sfx/npc-not-imposter.mp3',
+  'index.html',
+  'manifest.json',
+  'version.txt'
 ];
 
-// archivos que SIEMPRE deben intentarse desde la red primero (nunca servir
-// caché vieja sin más: acá vive el número de versión y el HTML del juego)
-const NETWORK_FIRST = [
-  './',
-  './index.html',
-  './manifest.json',
-  './version.txt'
-];
-
-function isNetworkFirst(url){
-  const path = url.pathname;
-  return NETWORK_FIRST.some(function(nf){
-    return path.endsWith(nf.replace('./','/')) || path === self.registration.scope.replace(location.origin,'') && nf === './';
-  }) || path.endsWith('/version.txt') || path.endsWith('/index.html') || path.endsWith('/manifest.json');
-}
-
-self.addEventListener('install', function(event){
+// --- instalación: descarga y guarda todo en caché -------------------------
+self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(function(cache){
-      return Promise.all(
-        CORE_ASSETS.map(function(url){
-          return fetch(url, { cache: 'reload' })
-            .then(function(response){
-              if (response && response.ok) {
-                return cache.put(url, response);
-              }
-            })
-            .catch(function(err){
-              console.warn('No se pudo precachear', url, err);
-            });
-        })
-      );
-    })
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then(() => self.skipWaiting())
   );
-  self.skipWaiting();
 });
 
-self.addEventListener('activate', function(event){
+// --- activación: borra cachés viejas si algún día cambiás CACHE_NAME ------
+self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then(function(cacheNames){
-      return Promise.all(
-        cacheNames
-          .filter(function(name){ return name !== CACHE_NAME; })
-          .map(function(name){ return caches.delete(name); })
-      );
-    })
+    caches.keys().then((names) =>
+      Promise.all(
+        names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n))
+      )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Parche 1: Corrección de parseo del Range Header cuando viene sin límite superior ("bytes=0-")
-async function buildRangeResponse(request, cachedResponse){
-  const rangeHeader = request.headers.get('range');
-  const buffer = await cachedResponse.arrayBuffer();
-  const totalLength = buffer.byteLength;
-
-  let start = 0;
-  let end = totalLength - 1;
-
-  if (rangeHeader) {
-    const match = /bytes=(\d+)-(\d*)/.exec(rangeHeader);
-    if (match) {
-      start = parseInt(match[1], 10) || 0;
-      if (match[2]) {
-        end = parseInt(match[2], 10);
-      }
-    }
-  }
-
-  const sliceEnd = Math.min(end, totalLength - 1);
-  const chunk = buffer.slice(start, sliceEnd + 1);
-
-  const headers = new Headers(cachedResponse.headers);
-  headers.set('Content-Range', 'bytes ' + start + '-' + sliceEnd + '/' + totalLength);
-  headers.set('Content-Length', chunk.byteLength);
-  headers.set('Accept-Ranges', 'bytes');
-
-  return new Response(chunk, {
-    status: 206,
-    statusText: 'Partial Content',
-    headers: headers
-  });
-}
-
-function cacheFullFileInBackground(url){
-  fetch(url, { cache: 'reload' }).then(function(fullResponse){
-    if (fullResponse && fullResponse.ok) {
-      caches.open(CACHE_NAME).then(function(cache){
-        cache.put(url, fullResponse);
-      });
-    }
-  }).catch(function(){ /* sin conexión */ });
-}
-
-self.addEventListener('fetch', function(event){
-  const request = event.request;
-  const url = new URL(request.url);
-
-  if (request.method !== 'GET' || url.origin !== self.location.origin) {
-    return;
-  }
-
-  // --- network-first para HTML / manifest / version.txt --------------------
-  // Nunca queremos mostrar una versión vieja de estos archivos "a propósito":
-  // intentamos la red primero (sin caché HTTP), y solo si falla (sin conexión)
-  // usamos lo último que tengamos guardado.
-  if (isNetworkFirst(url)) {
-    event.respondWith(
-      fetch(request, { cache: 'no-store' })
-        .then(function(networkResponse){
-          if (networkResponse && networkResponse.ok) {
-            const clone = networkResponse.clone();
-            caches.open(CACHE_NAME).then(function(cache){ cache.put(request, clone); });
-          }
-          return networkResponse;
-        })
-        .catch(function(){
-          return caches.match(request).then(function(cached){
-            return cached || caches.match('./index.html');
-          });
-        })
-    );
-    return;
-  }
-
-  const isRangeRequest = request.headers.has('range');
+// --- fetch: sirve desde caché primero, ignorando el ?v= de la query -------
+// (así funciona con o sin conexión, y con o sin el cache-busting de
+// version.txt que ya tiene el juego)
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
 
   event.respondWith(
-    // OJO: sin ignoreSearch. Cada URL con su ?v=X distinto es una entrada de
-    // caché distinta, así el ?v= que agrega version.txt SÍ hace lo que debe:
-    // forzar que se pida y guarde una copia nueva cuando cambia la versión.
-    caches.match(request).then(function(cachedResponse){
+    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
+      if (cached) return cached;
 
-      if (cachedResponse) {
-        if (isRangeRequest) {
-          return buildRangeResponse(request, cachedResponse.clone());
+      // no estaba precacheado: lo pide a la red y lo guarda para la próxima
+      return fetch(event.request).then((response) => {
+        if (response && response.ok) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
-
-        // Revalidación en segundo plano si no es Range Request
-        fetch(request).then(function(networkResponse){
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then(function(cache){
-              cache.put(request, networkResponse);
-            });
-          }
-        }).catch(function(){});
-
-        return cachedResponse;
-      }
-
-      // Si no estaba en caché:
-      if (isRangeRequest) {
-        cacheFullFileInBackground(url.href);
-        return fetch(request);
-      }
-
-      return fetch(request).then(function(networkResponse){
-        if (networkResponse && networkResponse.status === 200) {
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then(function(cache){
-            cache.put(request, responseClone);
-          });
-        }
-        return networkResponse;
-      });
+        return response;
+      }).catch(() => cached);
     })
   );
 });
