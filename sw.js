@@ -1,5 +1,7 @@
-// Service Worker de HIDDEN (v2.1 - Audio Fix)
-const CACHE_NAME = 'hidden-game-cache-v2';
+// Service Worker de HIDDEN (v2.2 - Fix versión pegada)
+const CACHE_NAME = 'hidden-game-cache-v3'; // <- IMPORTANTE: subir este número cada vez que
+                                            //    cambies este mismo sw.js, para forzar limpieza
+                                            //    de caché vieja en el activate()
 
 const CORE_ASSETS = [
   './',
@@ -9,6 +11,22 @@ const CORE_ASSETS = [
   './MainTheme2.mp3',
   './MenuTheme.mp3'
 ];
+
+// archivos que SIEMPRE deben intentarse desde la red primero (nunca servir
+// caché vieja sin más: acá vive el número de versión y el HTML del juego)
+const NETWORK_FIRST = [
+  './',
+  './index.html',
+  './manifest.json',
+  './version.txt'
+];
+
+function isNetworkFirst(url){
+  const path = url.pathname;
+  return NETWORK_FIRST.some(function(nf){
+    return path.endsWith(nf.replace('./','/')) || path === self.registration.scope.replace(location.origin,'') && nf === './';
+  }) || path.endsWith('/version.txt') || path.endsWith('/index.html') || path.endsWith('/manifest.json');
+}
 
 self.addEventListener('install', function(event){
   event.waitUntil(
@@ -96,21 +114,42 @@ self.addEventListener('fetch', function(event){
     return;
   }
 
+  // --- network-first para HTML / manifest / version.txt --------------------
+  // Nunca queremos mostrar una versión vieja de estos archivos "a propósito":
+  // intentamos la red primero (sin caché HTTP), y solo si falla (sin conexión)
+  // usamos lo último que tengamos guardado.
+  if (isNetworkFirst(url)) {
+    event.respondWith(
+      fetch(request, { cache: 'no-store' })
+        .then(function(networkResponse){
+          if (networkResponse && networkResponse.ok) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then(function(cache){ cache.put(request, clone); });
+          }
+          return networkResponse;
+        })
+        .catch(function(){
+          return caches.match(request).then(function(cached){
+            return cached || caches.match('./index.html');
+          });
+        })
+    );
+    return;
+  }
+
   const isRangeRequest = request.headers.has('range');
 
   event.respondWith(
-    // Parche 2: Buscar por la URL directa o ignorar variaciones de query/headers
-    caches.match(url.pathname, { ignoreSearch: true }).then(function(cachedResponse){
-      
-      // Fallback a match normal si la clave fue guardada con URL relativa completa
-      return cachedResponse || caches.match(request);
-    }).then(function(cachedResponse){
+    // OJO: sin ignoreSearch. Cada URL con su ?v=X distinto es una entrada de
+    // caché distinta, así el ?v= que agrega version.txt SÍ hace lo que debe:
+    // forzar que se pida y guarde una copia nueva cuando cambia la versión.
+    caches.match(request).then(function(cachedResponse){
 
       if (cachedResponse) {
         if (isRangeRequest) {
           return buildRangeResponse(request, cachedResponse.clone());
         }
-        
+
         // Revalidación en segundo plano si no es Range Request
         fetch(request).then(function(networkResponse){
           if (networkResponse && networkResponse.status === 200) {
