@@ -221,6 +221,7 @@ let clickLock = false;
 let timeLeft = START_TIME_MS;
 let lastSecond = Math.ceil(START_TIME_MS/1000);
 let score = 0;
+let roundCount = 0; // cuántas rondas (spawnRound) van en la partida actual, usado por el modo Invert
 let enemiesKilled = 0;
 let chestsOpened = 0; // cofres abiertos en esta partida
 let catchStreak = 0; // racha de aciertos, se corta con un click erróneo
@@ -408,7 +409,12 @@ const BG_GROUND_VARIANTS = [
   loadImg('assets/bg-world/bg-pasto1.png'),
   loadImg('assets/bg-world/bg-pasto2.png'),
   loadImg('assets/bg-world/bg-pasto3.png'),
-  loadImg('assets/bg-world/bg-pasto4.png')
+  loadImg('assets/bg-world/bg-pasto4.png'),
+  loadImg('assets/bg-world/bg-pasto5.png'),
+  loadImg('assets/bg-world/bg-pasto6.png'),
+  loadImg('assets/bg-world/bg-pasto7.png'),
+  loadImg('assets/bg-world/bg-pasto8.png'),
+  loadImg('assets/bg-world/bg-pasto9.png')
 ];
 let BG_GROUND = BG_GROUND_VARIANTS[0];
 function pickRandomGround(){
@@ -426,13 +432,15 @@ function pickRandomLake(){
 }
 const BG_TREES_VARIANTS = [
   loadImg('assets/bg-world/bg-arboles1.png'),
-  loadImg('assets/bg-world/bg-arboles2.png')
+  loadImg('assets/bg-world/bg-arboles2.png'),
+  loadImg('assets/bg-world/bg-arboles3.png') // esta variante es transparente, no hay árboles
 ];
 let BG_TREES = BG_TREES_VARIANTS[0];   // se dibuja encima de los personajes
 // cada árbol tiene su tronco correspondiente, pickrandomtrees elige el mismo índice para los dos
 const BG_TRONCO_VARIANTS = [
   loadImg('assets/bg-world/arbol-tronco1.png'),
-  loadImg('assets/bg-world/arbol-tronco2.png')
+  loadImg('assets/bg-world/arbol-tronco2.png'),
+  loadImg('assets/bg-world/arbol-tronco3.png') // también transparente, hace juego con bg-arboles3
 ];
 let BG_TRONCO = BG_TRONCO_VARIANTS[0];
 function pickRandomTrees(){
@@ -538,7 +546,8 @@ const TRONCO_HITBOXES = [
   [ // variante 2
     {x0:211, y0:237, x1:250, y1:294},
     {x0:295, y0:591, x1:334, y1:648}
-  ]
+  ],
+  [] // variante 3: tronco transparente, sin árboles, no hay colisión
 ];
 
 function isLake(x, y){
@@ -575,10 +584,12 @@ function isBlockedByWorld(entity, x, y){
 
 // colisión contra el cofre, solo para el movimiento de sprites/enemigo, no para el spawn
 function isChestSolid(entity, x, y){
-  if(!chest) return false;
-  const dx = x-chest.x, dy = y-chest.y;
-  const minD = (Math.max(entity.w, entity.h) + Math.max(chest.w, chest.h))/2 * 0.55;
-  return Math.hypot(dx,dy) < minD;
+  for(const c of chests){
+    const dx = x-c.x, dy = y-c.y;
+    const minD = (Math.max(entity.w, entity.h) + Math.max(c.w, c.h))/2 * 0.55;
+    if(Math.hypot(dx,dy) < minD) return true;
+  }
+  return false;
 }
 
 function drawBackground(){
@@ -652,11 +663,12 @@ function spawnRound(){
   sprites = [];
   clickLock = false;
   splashes = [];
-  powerupFly = null;
+  powerupFlies = [];
   freezeTimeLeft = 0;
   if(slowmoTimeLeft > 0 || jumpPartyTimeLeft > 0) setMainMusicRate(1); // por si quedó slow-mo o jump party activo de la ronda anterior
   slowmoTimeLeft = 0;
   jumpPartyTimeLeft = 0;
+  roundCount++; // usado por el modo Invert para alternar la pantalla cada 1 ronda
 
   const tChar = choice(CHAR_NAMES);
   const tVariants = variantsOf(tChar);
@@ -693,7 +705,27 @@ function spawnRound(){
   }
 
   spawnEnemies();
-  chest = Math.random() < CHEST_SPAWN_CHANCE ? makeChest() : null;
+  chests = spawnChests();
+}
+
+// spawn de cofres por ronda: en modo normal sigue siendo 1 intento con la
+// chance de siempre (como antes). en modo Lucky (MODE_LUCKY / config-hard3)
+// siempre aparecen al menos LUCKY_MIN_CHESTS, y hasta LUCKY_MAX_CHESTS si la
+// chance extra (CHEST_SPAWN_CHANCE) acompaña
+const LUCKY_MIN_CHESTS = 2;
+const LUCKY_MAX_CHESTS = 5;
+function spawnChests(){
+  const list = [];
+  if(hardLevel === MODE_LUCKY){
+    for(let i=0;i<LUCKY_MIN_CHESTS;i++) list.push(makeChest(list));
+    const extraAttempts = LUCKY_MAX_CHESTS - LUCKY_MIN_CHESTS;
+    for(let i=0;i<extraAttempts;i++){
+      if(Math.random() < CHEST_SPAWN_CHANCE) list.push(makeChest(list));
+    }
+  } else {
+    if(Math.random() < CHEST_SPAWN_CHANCE) list.push(makeChest(list));
+  }
+  return list;
 }
 
 // personajes decorativos que caminan de fondo en el menú
@@ -726,8 +758,8 @@ const CHEST_TIME_BONUS_OPTIONS_MS = [1000, 2000, 3000, 4000]; // variaciones pos
 const CHEST_FREEZE_CHANCE = 0.34;
 const CHEST_SLOWMO_CHANCE = 0.33;
 const CHEST_JUMPPARTY_CHANCE = 0.15;
-let chest = null;
-let powerupFly = null; // el power-up que ya salió volando
+let chests = [];
+let powerupFlies = []; // los power-ups que ya salieron volando (uno por cofre abierto)
 
 // cofre falso: mismo cofre pero resta tiempo en vez de dar
 const CHEST_FAKE_CLOSED_IMG = loadImg('assets/powerup/cofre3.png');
@@ -767,7 +799,7 @@ const JUMPPARTY_DURATION_MS = 6000;
 const JUMPPARTY_MUSIC_RATE = 1.35; // pitch up de la música mientras dura (lo opuesto al slow-mo)
 let jumpPartyTimeLeft = 0; // ms que quedan de fiesta de saltos
 
-function makeChest(){
+function makeChest(existingChests){
   const w = CHEST_W, h = CHEST_H;
   // el dorado se decide primero, si sale dorado ya no puede ser falso
   const isGold = Math.random() < CHEST_GOLD_CHANCE;
@@ -783,7 +815,7 @@ function makeChest(){
       isGold
     };
     tries++;
-  } while((overlapsAny(c, sprites) || overlapsAny(c, enemies) || isBlockedByWorld(c, c.x, c.y)) && tries<25);
+  } while((overlapsAny(c, sprites) || overlapsAny(c, enemies) || overlapsAny(c, existingChests||[]) || isBlockedByWorld(c, c.x, c.y)) && tries<25);
   return c;
 }
 
@@ -833,22 +865,24 @@ function openChest(c){
 
   const angle = rand(0, Math.PI*2);
   const speed = rand(30, 50);
-  powerupFly = {
+  powerupFlies.push({
     x: c.x, y: c.y,
     w, h, img,
     vx: Math.cos(angle)*speed,
     vy: -rand(ENEMY_LAUNCH_VY_MIN, ENEMY_LAUNCH_VY_MAX),
     gravity: ENEMY_GRAVITY
-  };
+  });
 }
 
 function updatePowerupFly(dt){
-  if(!powerupFly) return;
+  if(powerupFlies.length === 0) return;
   const dtS = dt/1000;
-  powerupFly.vy += powerupFly.gravity * dtS;
-  powerupFly.x += powerupFly.vx * dtS;
-  powerupFly.y += powerupFly.vy * dtS;
-  if(powerupFly.y > H + powerupFly.h) powerupFly = null;
+  for(const pf of powerupFlies){
+    pf.vy += pf.gravity * dtS;
+    pf.x += pf.vx * dtS;
+    pf.y += pf.vy * dtS;
+  }
+  powerupFlies = powerupFlies.filter(pf => pf.y <= H + pf.h);
 }
 
 function drawChest(c){
@@ -865,16 +899,66 @@ function drawFreezeOverlay(){
   drawImgNative(FREEZE_OVERLAY_IMG);
 }
 
+// se dibuja arriba de todo mientras dura el "jump party": tiñe la pantalla
+// con colores arcoíris pulsantes + haces de luz giratorios, efecto disco
+function drawJumpPartyOverlay(now){
+  if(jumpPartyTimeLeft <= 0) return;
+  const t = now * 0.001;
+  const hueOffset = (now / 6) % 360;
+
+  // capa de color de fondo, cicla por todo el arcoíris
+  ctx.save();
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.globalAlpha = 0.35;
+  const grad = ctx.createLinearGradient(0, 0, W, H);
+  for(let i=0;i<=6;i++){
+    const hue = (hueOffset + i*60) % 360;
+    grad.addColorStop(i/6, `hsl(${hue},100%,50%)`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  // haces de luz tipo disco girando desde arriba
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.22;
+  const beamCount = 6;
+  for(let i=0;i<beamCount;i++){
+    const angle = t * 0.6 + i * (Math.PI*2/beamCount);
+    const hue = (hueOffset + i*60) % 360;
+    ctx.save();
+    ctx.translate(W/2, 0);
+    ctx.rotate(angle);
+    const beamGrad = ctx.createLinearGradient(0, 0, 0, H*1.3);
+    beamGrad.addColorStop(0, `hsla(${hue},100%,60%,0.6)`);
+    beamGrad.addColorStop(1, `hsla(${hue},100%,60%,0)`);
+    ctx.fillStyle = beamGrad;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-45, H*1.3);
+    ctx.lineTo(45, H*1.3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawPowerupFly(){
-  if(!powerupFly) return;
-  drawImgSized(powerupFly.img, powerupFly.x-powerupFly.w/2, powerupFly.y-powerupFly.h/2, powerupFly.w, powerupFly.h);
+  for(const pf of powerupFlies){
+    drawImgSized(pf.img, pf.x-pf.w/2, pf.y-pf.h/2, pf.w, pf.h);
+  }
 }
 
 
 const HUD = {
   font: '30px Impact, "Arial Narrow", sans-serif',
   fill: '#ffffff',
-  fillHard: '#ff3b3b', // color del timer cuando está activo el modo difícil
+  fillHard: '#ff3b3b',   // color del timer cuando está activo el modo difícil
+  fillLucky: '#a6ff95',  // verde claro, modo Lucky
+  fillInvert: '#82b5bd', // celeste tirado a azul, modo Invert
+  fillBlind: '#fda9fd',  // morado claro, modo Blind
   stroke: '#000000',
   lineWidth: 6,
   x: 16,
@@ -933,6 +1017,9 @@ function isScoreMilestone(v){
 
 // draw
 const FIND_ICON_GAP = 14; // separación entre "find:" y el ícono
+// modo Blind (config-hard4): el ícono de arriba siempre es este, nunca el
+// personaje real, para que haya que buscarlo a ciegas
+const BLIND_ICON_IMG = loadImg('assets/pjs/icons/blind.png');
 
 function drawTarget(){
   const info = CHAR_DATA[target.char];
@@ -945,6 +1032,12 @@ function drawTarget(){
   } else {
     const frames = info.variants[target.variant];
     iconSrc = frames[0]; iconW = info.w; iconH = info.h;
+  }
+
+  // en modo Blind, se tapa el ícono real con blind.png (mismo tamaño que el
+  // ícono que iba a mostrarse, para no romper el layout del cartel "find:")
+  if(hardLevel === MODE_BLIND && BLIND_ICON_IMG.complete && BLIND_ICON_IMG.naturalWidth>0){
+    iconSrc = BLIND_ICON_IMG;
   }
 
   const findReady = BG_FIND.complete && BG_FIND.naturalWidth>0;
@@ -987,7 +1080,7 @@ function drawTimer(){
   ctx.strokeStyle = HUD.stroke;
   ctx.lineJoin = 'round';
   ctx.strokeText(text, HUD.x, HUD.y);
-  ctx.fillStyle = isHardMode ? HUD.fillHard : HUD.fill;
+  ctx.fillStyle = timerColor();
   ctx.fillText(text, HUD.x, HUD.y);
   ctx.restore();
 }
@@ -1280,18 +1373,25 @@ const CONFIG_BASE = loadImg('assets/hud/config/config-base.png');
 const CONFIG_LOGO = loadImg('assets/hud/config/config-logo.png');
 const CONFIG_EXIT = loadImg('assets/hud/config/icon-exit1.png');
 
-// botones de dos frames (toggle): frame 1 es el estado por defecto, frame 2
-// el estado activo. Tocar el botón alterna entre ambos frames.
-const CONFIG_HARD1 = loadImg('assets/hud/config/config-hard1.png');
-const CONFIG_HARD2 = loadImg('assets/hud/config/config-hard2.png');
+// botón de dificultad: ahora cicla entre 5 frames (config-hard1 ... config-hard5)
+// cada click pasa al siguiente, y del último vuelve al primero
+const CONFIG_HARD_VARIANTS = [
+  loadImg('assets/hud/config/config-hard1.png'),
+  loadImg('assets/hud/config/config-hard2.png'),
+  loadImg('assets/hud/config/config-hard3.png'),
+  loadImg('assets/hud/config/config-hard4.png'),
+  loadImg('assets/hud/config/config-hard5.png')
+];
+// botón de mute: sigue siendo un toggle simple de 2 frames
 const CONFIG_MUTE1 = loadImg('assets/hud/config/config-mute1.png');
 const CONFIG_MUTE2 = loadImg('assets/hud/config/config-mute2.png');
 
 const configExitMask = buildAlphaMask(CONFIG_EXIT, 'icon-exit1.png');
 // cada frame tiene su propia máscara, ya que el dibujo (y por ende el alpha)
 // cambia de un frame a otro
-const configHardMask1 = buildAlphaMask(CONFIG_HARD1, 'config-hard1.png');
-const configHardMask2 = buildAlphaMask(CONFIG_HARD2, 'config-hard2.png');
+const configHardMasks = CONFIG_HARD_VARIANTS.map((img, i) =>
+  buildAlphaMask(img, `config-hard${i+1}.png`)
+);
 const configMuteMask1 = buildAlphaMask(CONFIG_MUTE1, 'config-mute1.png');
 const configMuteMask2 = buildAlphaMask(CONFIG_MUTE2, 'config-mute2.png');
 
@@ -1310,12 +1410,43 @@ function toggleMute(){
   if(!isMuted) playUiSound1(); // si quedó muteado no tendría sentido sonar
 }
 
-// modo difícil: por ahora solo el botón cambia de frame, todavía sin efecto
-// real sobre la dificultad del juego (TODO)
+// niveles del botón de dificultad (config-hard1..config-hard5). cada nivel es
+// un modo independiente, no una escala progresiva: NORMAL es el default,
+// HARD es el modo difícil de siempre, LUCKY es normal + más cofres, BLIND es
+// normal pero el ícono de arriba siempre muestra blind.png en vez del
+// personaje real, INVERT alterna la pantalla de cabeza cada 1 ronda.
+const MODE_NORMAL = 0; // config-hard1
+const MODE_HARD   = 1; // config-hard2
+const MODE_LUCKY  = 2; // config-hard3
+const MODE_BLIND  = 3; // config-hard4
+const MODE_INVERT = 4; // config-hard5
+let hardLevel = MODE_NORMAL;
+// true solo en el modo difícil real (MODE_HARD); los demás modos (incluido
+// Lucky) usan los valores normales de tiempo/penalización/enemigos/etc.
 let isHardMode = false;
-function toggleHardMode(){
-  isHardMode = !isHardMode;
+function cycleHardLevel(){
+  hardLevel = (hardLevel + 1) % CONFIG_HARD_VARIANTS.length;
+  isHardMode = hardLevel === MODE_HARD;
   playUiSound1();
+}
+
+// modo Invert: la pantalla se da vuelta verticalmente cada 1 ronda, y en la
+// siguiente ronda vuelve a la normalidad, alternando así sucesivamente.
+// roundCount arranca en 1 en la primera ronda (ver spawnRound), así que las
+// rondas pares son las que aparecen invertidas.
+function isScreenFlipped(){
+  return hardLevel === MODE_INVERT && (roundCount % 2 === 0);
+}
+
+// color del timer según el modo activo
+function timerColor(){
+  switch(hardLevel){
+    case MODE_HARD:   return HUD.fillHard;
+    case MODE_LUCKY:  return HUD.fillLucky;
+    case MODE_BLIND:  return HUD.fillBlind;
+    case MODE_INVERT: return HUD.fillInvert;
+    default:          return HUD.fill;
+  }
 }
 
 // la dificultad solo se puede cambiar fuera de una partida en curso (si el
@@ -1329,7 +1460,7 @@ function drawConfig(now){
   const bob = Math.sin((now / LOGO_BOB_PERIOD) * Math.PI * 2) * LOGO_BOB_AMPLITUDE;
   drawImgNative(CONFIG_LOGO, 0, bob);
   if(!canChangeDifficulty()) ctx.globalAlpha = 0.4; // atenuado: avisa que está bloqueado en partida
-  drawImgNative(isHardMode ? CONFIG_HARD2 : CONFIG_HARD1);
+  drawImgNative(CONFIG_HARD_VARIANTS[hardLevel]);
   ctx.globalAlpha = 1;
   drawImgNative(isMuted ? CONFIG_MUTE2 : CONFIG_MUTE1);
   drawImgNative(CONFIG_EXIT);
@@ -1513,7 +1644,7 @@ function drawWorldEntitiesDepthSorted(){
   const items = [];
   for(const s of sprites) items.push({depth: s.y + s.h/2, draw: () => drawSprite(s)});
   for(const e of enemies) items.push({depth: e.y + e.h/2, draw: () => drawEnemy(e)});
-  if(chest) items.push({depth: chest.y + chest.h/2, draw: () => drawChest(chest)});
+  for(const c of chests) items.push({depth: c.y + c.h/2, draw: () => drawChest(c)});
   items.sort((a, b) => a.depth - b.depth);
   for(const it of items) it.draw();
 }
@@ -1691,6 +1822,9 @@ function loop(now){
       drawMenu(now);
     }
   } else {
+    const flipped = gameState === STATE.PLAYING && isScreenFlipped();
+    ctx.save();
+    if(flipped){ ctx.translate(0, H); ctx.scale(1, -1); } // modo Invert: pantalla de cabeza esta ronda
     ctx.save();
     if(gameState === STATE.GAMEOVER) ctx.filter = `blur(${GAMEOVER_BG_BLUR_PX}px)`;
     drawBackground();
@@ -1701,6 +1835,7 @@ function loop(now){
     ctx.restore();
     if(gameState === STATE.GAMEOVER){
       drawFreezeOverlay();
+      drawJumpPartyOverlay(now);
       drawGameOver(now);
     } else if(gameState === STATE.CONFIG){
       drawTarget();
@@ -1708,6 +1843,7 @@ function loop(now){
       drawScoreHUD();
       drawTimeGainPopups(now);
       drawFreezeOverlay();
+      drawJumpPartyOverlay(now);
       drawConfig(now);
     } else {
       drawTarget();
@@ -1715,7 +1851,9 @@ function loop(now){
       drawScoreHUD();
       drawTimeGainPopups(now);
       drawFreezeOverlay();
+      drawJumpPartyOverlay(now);
     }
+    ctx.restore();
   }
 
   drawIntroFade(now);
@@ -1756,12 +1894,12 @@ function handleClick(evt){
   }
 
   if(gameState === STATE.CONFIG){
-    const hardMask = isHardMode ? configHardMask2 : configHardMask1;
+    const hardMask = configHardMasks[hardLevel];
     const muteMask = isMuted ? configMuteMask2 : configMuteMask1;
     if(alphaAt(configExitMask, p.x, p.y) === 1){
       gameState = stateBeforeConfig;
     } else if(alphaAt(hardMask, p.x, p.y) === 1 && canChangeDifficulty()){
-      toggleHardMode();
+      cycleHardLevel();
     } else if(alphaAt(muteMask, p.x, p.y) === 1){
       toggleMute();
     }
@@ -1796,6 +1934,14 @@ function handleClick(evt){
     return;
   }
 
+  // modo Invert: la pantalla se ve dada vuelta esta ronda, pero las
+  // posiciones reales de los sprites siguen sin invertir, así que hay que
+  // convertir la coordenada del click/touch a ese mismo espacio antes de
+  // testear colisiones (incluyendo el chequeo de la zona del HUD de arriba)
+  if(gameState === STATE.PLAYING && isScreenFlipped()){
+    p.y = H - p.y;
+  }
+
   if(p.y < FIELD_TOP) return;
 
   if(splashes.length > 0){
@@ -1813,9 +1959,11 @@ function handleClick(evt){
     }
   }
 
-  if(chest && !chest.opened && isChestClick(chest, p.x, p.y)){
-    openChest(chest);
-    return;
+  for(const c of chests){
+    if(!c.opened && isChestClick(c, p.x, p.y)){
+      openChest(c);
+      return;
+    }
   }
 
   if(clickLock) return;
@@ -1868,6 +2016,7 @@ function startNewGame(){
   lastSecond = Math.ceil(startTimeMs()/1000);
   timeGainPopups = [];
   splashes = [];
+  roundCount = 0; // arranca siempre en pantalla normal (round 1 = sin invertir)
   spawnRound();
 }
 
