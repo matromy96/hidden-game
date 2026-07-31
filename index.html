@@ -32,6 +32,18 @@
 </style>
 </head>
 <body>
+<script>
+// registra el service worker que deja el juego jugable offline
+// (ver sw.js) — si falla el registro, el juego sigue andando igual,
+// solo que va a necesitar internet cada vez
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(err => {
+      console.error('[SW] no se pudo registrar', err);
+    });
+  });
+}
+</script>
 <canvas id="game" width="450" height="800"></canvas>
 <audio id="main-theme" src="MainTheme.mp3" loop preload="auto"></audio>
 <audio id="main-theme2" src="MainTheme2.mp3" loop preload="auto"></audio>
